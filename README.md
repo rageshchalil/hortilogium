@@ -2,6 +2,7 @@
 
 A mobile-first PWA to track your plants, care schedules, photos, and journal entries.
 Works on phone, tablet, and laptop. Installs to your home screen like a native app.
+Protected by magic link login — only people you invite can access it.
 
 ---
 
@@ -10,20 +11,20 @@ Works on phone, tablet, and laptop. Installs to your home screen like a native a
 | Service | Purpose | Cost |
 |---------|---------|------|
 | [Vercel](https://vercel.com) | Hosting | Free |
-| [Supabase](https://supabase.com) | Database (sync across devices) | Free |
+| [Supabase](https://supabase.com) | Database + Auth | Free |
 | [Cloudinary](https://cloudinary.com) | Photo storage | Free (25 GB) |
 | [GitHub](https://github.com) | Deploy source | Free |
 
 ---
 
-## Step 1 — Set up Supabase (database)
+## Step 1 — Set up Supabase (database + auth)
 
 1. Go to [supabase.com](https://supabase.com) → **Start your project** → sign in with GitHub
 2. Click **New project**, give it a name (e.g. `garden-journal`), choose a region close to you (e.g. Europe West)
 3. Once created, go to **SQL Editor** (left sidebar) and run this SQL:
 
 ```sql
--- Plants table
+-- Plants table (shared by whole household)
 create table plants (
   id text primary key,
   name text not null,
@@ -39,7 +40,7 @@ create table plants (
   created_at timestamptz default now()
 );
 
--- Journal table
+-- Journal table (shared by whole household)
 create table journal (
   id text primary key,
   date date not null,
@@ -48,21 +49,39 @@ create table journal (
   created_at timestamptz default now()
 );
 
--- Allow public read/write (personal app — you can add auth later)
+-- Require login to read/write (auth gate)
 alter table plants enable row level security;
 alter table journal enable row level security;
 
-create policy "Allow all" on plants for all using (true) with check (true);
-create policy "Allow all" on journal for all using (true) with check (true);
+create policy "Authenticated users only" on plants
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "Authenticated users only" on journal
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 ```
 
-4. Go to **Project Settings → API** and copy:
-   - **Project URL** → this is your `SUPABASE_URL`
-   - **anon public** key → this is your `SUPABASE_ANON_KEY`
+4. Go to **Authentication → Settings** in Supabase and make sure **Enable email confirmations** is OFF (magic links handle this themselves).
+
+5. Go to **Project Settings → API** and copy:
+   - **Project URL** → `SUPABASE_URL`
+   - **anon public** key → `SUPABASE_ANON_KEY`
 
 ---
 
-## Step 2 — Set up Cloudinary (photos)
+## Step 2 — Invite household members
+
+Only people with a Supabase account linked to your project can log in. To invite someone:
+
+1. Go to **Authentication → Users** in Supabase
+2. Click **Invite user** and enter their email
+3. They'll receive an invite email — once accepted, they can use magic link login
+
+Alternatively, just share the app URL — when they enter their email on the login screen,
+Supabase will send them a magic link automatically (as long as their email is in your Users list).
+
+---
+
+## Step 3 — Set up Cloudinary (photos)
 
 1. Go to [cloudinary.com](https://cloudinary.com) → **Sign up free**
 2. From your dashboard, note your **Cloud name**
@@ -75,83 +94,44 @@ create policy "Allow all" on journal for all using (true) with check (true);
 
 ---
 
-## Step 3 — Deploy to Vercel
+## Step 4 — Deploy to Vercel
 
 1. Push this folder to a new GitHub repository
 2. Go to [vercel.com](https://vercel.com) → **New Project** → import your GitHub repo
-3. In the **Environment Variables** section, add these four variables:
+3. In the **Environment Variables** section, add these four:
 
 ```
-REACT_APP_SUPABASE_URL         = https://your-project.supabase.co
-REACT_APP_SUPABASE_ANON_KEY    = your-anon-key
-REACT_APP_CLOUDINARY_CLOUD_NAME = your-cloud-name
-REACT_APP_CLOUDINARY_UPLOAD_PRESET = garden-journal
+REACT_APP_SUPABASE_URL              = https://your-project.supabase.co
+REACT_APP_SUPABASE_ANON_KEY         = your-anon-key
+REACT_APP_CLOUDINARY_CLOUD_NAME     = your-cloud-name
+REACT_APP_CLOUDINARY_UPLOAD_PRESET  = garden-journal
 ```
 
-4. Click **Deploy** — done! Vercel gives you a URL like `https://garden-journal-abc123.vercel.app`
+4. Click **Deploy** — done!
 
 ---
 
-## Step 4 — Install on your devices
+## Step 5 — Install on your devices
 
 ### On your phone (iOS)
 1. Open the app URL in **Safari**
 2. Tap the **Share** button → **Add to Home Screen**
-3. The app icon appears on your home screen — it works like a native app!
 
 ### On your phone (Android)
 1. Open the URL in **Chrome**
-2. Tap the **three-dot menu** → **Add to Home screen** (or Chrome may show a banner)
+2. Tap the **three-dot menu** → **Add to Home screen**
 
 ### On your laptop
 1. Open the URL in **Chrome** or **Edge**
-2. Look for the **install icon** (⊕) in the address bar → click it
-3. The app opens in its own window, with no browser chrome
+2. Click the install icon (⊕) in the address bar
 
 ---
 
-## Using the app
+## How login works
 
-### Plants tab
-- Browse all your plants in a grid
-- Search by name, type, or latin name
-- Tap any plant to see its full profile
-
-### Plant detail
-- **Info** — all care details, edit or delete
-- **Calendar** — visual month-by-month care schedule
-- **Photos** — add photos from camera or gallery (requires Cloudinary)
-- **Journal** — entries specific to this plant
-
-### Calendar tab
-- See everything due this month at a glance
-- Full year overview with colour-coded dots (blue = water, amber = fertilise, red = prune)
-
-### Journal tab
-- Free-text notes, optionally linked to a plant
-- All entries across all plants in one timeline
-
-### Overview tab
-- Summary stats and today's tasks
-
----
-
-## Optional — Running locally
-
-```bash
-cd garden-journal
-cp .env.example .env.local
-# fill in your values in .env.local
-npm install
-npm start
-```
-
-App opens at http://localhost:3000
-
----
-
-## Note on security
-
-This app uses Supabase Row Level Security with open policies (anyone with the URL can read/write).
-This is fine for a personal app. If you want to add login/password protection later,
-Supabase has built-in Auth — just let me know and I can add it.
+- Anyone who visits the app sees a login screen
+- They enter their email address and tap "Send magic link"
+- Supabase emails them a one-click link — no password needed
+- Clicking the link signs them in and redirects back to the app
+- They stay signed in on that device until they tap the sign-out button
+- All household members share the same plants and journal — nothing is private per-user

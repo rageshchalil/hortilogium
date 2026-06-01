@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { fetchPlants, upsertPlant, deletePlantDb, fetchJournal, insertJournalEntry, deleteJournalEntry, uploadPhoto } from './db';
+import { fetchPlants, upsertPlant, deletePlantDb, fetchJournal, insertJournalEntry, deleteJournalEntry, uploadPhoto, sendMagicLink, signOut, onAuthChange } from './db';
+import { supabase } from './db';
 import './App.css';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -23,14 +24,97 @@ function typeColor(type) {
   return { Shrub:'green', Tree:'teal', Perennial:'blue', Annual:'amber', Bulb:'purple', Herb:'herb', Climber:'coral', Fruit:'fruit', Vegetable:'veg', Other:'gray' }[type] || 'gray';
 }
 
-// ─────────────────────────────────────────────────────────
-export default function App() {
+// ─── Root: handles auth gate ──────────────────────────────
+export default function Root() {
+  const [session, setSession] = useState(undefined); // undefined = loading
+
+  useEffect(() => {
+    if (!supabase) { setSession(null); return; }
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const unsub = onAuthChange(s => setSession(s));
+    return unsub;
+  }, []);
+
+  if (session === undefined) {
+    return (
+      <div className="auth-loading">
+        <i className="ti ti-loader-2" style={{ animation:'spin 1s linear infinite', fontSize:32, color:'#2d5a27' }}></i>
+      </div>
+    );
+  }
+
+  if (!session) return <LoginScreen />;
+  return <App onSignOut={() => setSession(null)} userEmail={session.user?.email} />;
+}
+
+// ─── Login Screen ─────────────────────────────────────────
+function LoginScreen() {
+  const [email, setEmail] = useState('');
+  const [sent, setSent] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async () => {
+    const trimmed = email.trim();
+    if (!trimmed || !trimmed.includes('@')) { setError('Please enter a valid email address.'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      await sendMagicLink(trimmed);
+      setSent(true);
+    } catch (e) {
+      setError(e.message || 'Something went wrong. Please try again.');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="auth-screen">
+      <div className="auth-card">
+        <div className="auth-logo">🌿</div>
+        <h1 className="auth-title">My Garden Journal</h1>
+        <p className="auth-sub">Your household garden tracker</p>
+        {sent ? (
+          <div className="auth-sent">
+            <i className="ti ti-mail-check" style={{ fontSize:40, color:'#2d5a27', display:'block', marginBottom:12 }}></i>
+            <p className="auth-sent-title">Check your inbox!</p>
+            <p className="auth-sent-body">We've sent a magic link to <strong>{email}</strong>. Click it to sign in — no password needed.</p>
+            <button className="auth-resend" onClick={() => setSent(false)}>Use a different email</button>
+          </div>
+        ) : (
+          <>
+            <div className="form-group" style={{ marginBottom:8 }}>
+              <label className="form-label">Your email address</label>
+              <input
+                className="form-input"
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={e => { setEmail(e.target.value); setError(''); }}
+                onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+                autoFocus
+              />
+            </div>
+            {error && <p className="auth-error">{error}</p>}
+            <button className="btn-primary" onClick={handleSubmit} disabled={loading} style={{ marginTop:8 }}>
+              {loading ? <i className="ti ti-loader-2" style={{ animation:'spin 1s linear infinite' }}></i> : <><i className="ti ti-send"></i> Send magic link</>}
+            </button>
+            <p className="auth-hint">We'll email you a link — no password needed. Only people you've invited can access this app.</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main App ─────────────────────────────────────────────
+function App({ onSignOut, userEmail }) {
   const [tab, setTab] = useState('plants');
   const [plants, setPlants] = useState([]);
   const [journal, setJournal] = useState([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState(null); // null | 'addPlant' | 'editPlant' | 'addJournal'
+  const [modal, setModal] = useState(null);
   const [viewingPlant, setViewingPlant] = useState(null);
   const [plantTab, setPlantTab] = useState('info');
   const [editingPlant, setEditingPlant] = useState(null);
@@ -55,7 +139,6 @@ export default function App() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Register service worker
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
@@ -64,6 +147,11 @@ export default function App() {
 
   const now = new Date();
   const cm = now.getMonth();
+
+  const handleSignOut = async () => {
+    await signOut();
+    onSignOut();
+  };
 
   const savePlant = async (plant) => {
     try {
@@ -135,9 +223,14 @@ export default function App() {
           <div className="header-title">🌿 My Garden</div>
           <div className="header-sub">{plants.length} plants · {MONTHS_FULL[cm]} {now.getFullYear()}</div>
         </div>
-        {(tab === 'plants' || tab === 'journal') && !viewingPlant && (
-          <button className="btn-add" onClick={() => setModal(tab === 'journal' ? 'addJournal' : 'addPlant')} aria-label="Add">+</button>
-        )}
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          {(tab === 'plants' || tab === 'journal') && !viewingPlant && (
+            <button className="btn-add" onClick={() => setModal(tab === 'journal' ? 'addJournal' : 'addPlant')} aria-label="Add">+</button>
+          )}
+          <button className="btn-signout" onClick={handleSignOut} title={`Sign out (${userEmail})`} aria-label="Sign out">
+            <i className="ti ti-logout" aria-hidden="true"></i>
+          </button>
+        </div>
       </header>
 
       <main className="content">

@@ -7,16 +7,44 @@ export const supabase = supabaseUrl && supabaseKey
   ? createClient(supabaseUrl, supabaseKey)
   : null;
 
-// ── Plants ──────────────────────────────────────────────
+// ── Auth ─────────────────────────────────────────────────
+export async function sendMagicLink(email) {
+  if (!supabase) throw new Error('Supabase not configured');
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.origin }
+  });
+  if (error) throw error;
+}
+
+export async function signOut() {
+  if (!supabase) return;
+  await supabase.auth.signOut();
+}
+
+export function onAuthChange(callback) {
+  if (!supabase) return () => {};
+  const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    callback(session);
+  });
+  return () => subscription.unsubscribe();
+}
+
+// ── Plants ───────────────────────────────────────────────
 export async function fetchPlants() {
   if (!supabase) return getLocal('gj_plants', []);
   const { data, error } = await supabase.from('plants').select('*').order('created_at');
-  if (error) { console.error(error); return getLocal('gj_plants', []); }
+  if (error) { console.error(error); return []; }
   return data;
 }
 
 export async function upsertPlant(plant) {
-  if (!supabase) { saveLocal('gj_plants', p => p.map(x => x.id === plant.id ? plant : x).concat(p.some(x => x.id === plant.id) ? [] : [plant])); return plant; }
+  if (!supabase) {
+    saveLocal('gj_plants', p => p.some(x => x.id === plant.id)
+      ? p.map(x => x.id === plant.id ? plant : x)
+      : [...p, plant]);
+    return plant;
+  }
   const { data, error } = await supabase.from('plants').upsert(plant).select().single();
   if (error) throw error;
   return data;
@@ -31,7 +59,7 @@ export async function deletePlantDb(id) {
 export async function fetchJournal() {
   if (!supabase) return getLocal('gj_journal', []);
   const { data, error } = await supabase.from('journal').select('*').order('date', { ascending: false });
-  if (error) { console.error(error); return getLocal('gj_journal', []); }
+  if (error) { console.error(error); return []; }
   return data;
 }
 
@@ -56,13 +84,13 @@ export async function uploadPhoto(file, plantId) {
   form.append('file', file);
   form.append('upload_preset', uploadPreset);
   form.append('folder', `garden-journal/${plantId}`);
-  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, { method: 'POST', body: form });
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, { method:'POST', body:form });
   if (!res.ok) throw new Error('Upload failed');
   const data = await res.json();
   return data.secure_url;
 }
 
-// ── Local storage helpers (fallback when Supabase not set up) ──
+// ── Local storage fallback ───────────────────────────────
 function getLocal(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; }
 }
