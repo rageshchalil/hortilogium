@@ -355,8 +355,8 @@ function DashboardTab({ plants, journal, cm, onViewPlant }) {
 
 // ─── Plant Detail ─────────────────────────────────────────
 function PlantDetail({ plant, journal, plantTab, setPlantTab, onBack, onEdit, onDelete, onAddPhoto, onAddJournal, onDeleteJournal, cm }) {
-  if (!plant) return null;
   const fileRef = React.useRef();
+  if (!plant) return null;
   return (
     <>
       <button className="back-btn" onClick={onBack}><i className="ti ti-arrow-left" aria-hidden="true"></i> Back to plants</button>
