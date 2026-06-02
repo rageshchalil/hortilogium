@@ -8,13 +8,18 @@ export const supabase = supabaseUrl && supabaseKey
   : null;
 
 // ── Auth ─────────────────────────────────────────────────
-export async function sendMagicLink(email) {
+export async function signIn(email, password) {
   if (!supabase) throw new Error('Supabase not configured');
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.origin }
-  });
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
+  return data.session;
+}
+
+export async function signUp(email, password) {
+  if (!supabase) throw new Error('Supabase not configured');
+  const { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) throw error;
+  return data;
 }
 
 export async function signOut() {

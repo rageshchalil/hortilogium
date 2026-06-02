@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { fetchPlants, upsertPlant, deletePlantDb, fetchJournal, insertJournalEntry, deleteJournalEntry, uploadPhoto, sendMagicLink, signOut, onAuthChange } from './db';
+import { fetchPlants, upsertPlant, deletePlantDb, fetchJournal, insertJournalEntry, deleteJournalEntry, uploadPhoto, signIn, signUp, signOut } from './db';
 import { supabase } from './db';
 import './App.css';
 
@@ -30,9 +30,13 @@ export default function Root() {
 
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const unsub = onAuthChange(s => setSession(s));
-    return unsub;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+    supabase.auth.getSession()
+      .then(({ data }) => setSession(s => s ?? data.session))
+      .catch(() => setSession(null));
+    return () => subscription.unsubscribe();
   }, []);
 
   if (session === undefined) {
@@ -49,23 +53,37 @@ export default function Root() {
 
 // ─── Login Screen ─────────────────────────────────────────
 function LoginScreen() {
+  const [mode, setMode] = useState('signin');
   const [email, setEmail] = useState('');
-  const [sent, setSent] = useState(false);
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [signedUp, setSignedUp] = useState(false);
 
   const handleSubmit = async () => {
-    const trimmed = email.trim();
-    if (!trimmed || !trimmed.includes('@')) { setError('Please enter a valid email address.'); return; }
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !trimmedEmail.includes('@')) { setError('Please enter a valid email address.'); return; }
+    if (!password) { setError('Please enter a password.'); return; }
+    if (mode === 'signup' && password.length < 6) { setError('Password must be at least 6 characters.'); return; }
     setLoading(true);
     setError('');
     try {
-      await sendMagicLink(trimmed);
-      setSent(true);
+      if (mode === 'signin') {
+        await signIn(trimmedEmail, password);
+      } else {
+        await signUp(trimmedEmail, password);
+        setSignedUp(true);
+      }
     } catch (e) {
       setError(e.message || 'Something went wrong. Please try again.');
     }
     setLoading(false);
+  };
+
+  const switchMode = () => {
+    setMode(m => m === 'signin' ? 'signup' : 'signin');
+    setError('');
+    setPassword('');
   };
 
   return (
@@ -74,32 +92,50 @@ function LoginScreen() {
         <div className="auth-logo">🌿</div>
         <h1 className="auth-title">My Garden Journal</h1>
         <p className="auth-sub">Your household garden tracker</p>
-        {sent ? (
+        {signedUp ? (
           <div className="auth-sent">
             <i className="ti ti-mail-check" style={{ fontSize:40, color:'#2d5a27', display:'block', marginBottom:12 }}></i>
             <p className="auth-sent-title">Check your inbox!</p>
-            <p className="auth-sent-body">We've sent a magic link to <strong>{email}</strong>. Click it to sign in — no password needed.</p>
-            <button className="auth-resend" onClick={() => setSent(false)}>Use a different email</button>
+            <p className="auth-sent-body">We've sent a confirmation link to <strong>{email}</strong>. Click it to activate your account.</p>
+            <button className="auth-resend" onClick={() => { setSignedUp(false); setMode('signin'); }}>Back to sign in</button>
           </div>
         ) : (
           <>
             <div className="form-group" style={{ marginBottom:8 }}>
-              <label className="form-label">Your email address</label>
+              <label className="form-label">Email address</label>
               <input
                 className="form-input"
                 type="email"
                 placeholder="you@example.com"
                 value={email}
                 onChange={e => { setEmail(e.target.value); setError(''); }}
-                onKeyDown={e => e.key === 'Enter' && handleSubmit()}
                 autoFocus
+              />
+            </div>
+            <div className="form-group" style={{ marginBottom:8 }}>
+              <label className="form-label">Password</label>
+              <input
+                className="form-input"
+                type="password"
+                placeholder={mode === 'signup' ? 'At least 6 characters' : 'Your password'}
+                value={password}
+                onChange={e => { setPassword(e.target.value); setError(''); }}
+                onKeyDown={e => e.key === 'Enter' && handleSubmit()}
               />
             </div>
             {error && <p className="auth-error">{error}</p>}
             <button className="btn-primary" onClick={handleSubmit} disabled={loading} style={{ marginTop:8 }}>
-              {loading ? <i className="ti ti-loader-2" style={{ animation:'spin 1s linear infinite' }}></i> : <><i className="ti ti-send"></i> Send magic link</>}
+              {loading
+                ? <i className="ti ti-loader-2" style={{ animation:'spin 1s linear infinite' }}></i>
+                : mode === 'signin' ? <><i className="ti ti-login"></i> Sign in</> : <><i className="ti ti-user-plus"></i> Create account</>
+              }
             </button>
-            <p className="auth-hint">We'll email you a link — no password needed. Only people you've invited can access this app.</p>
+            <p className="auth-hint" style={{ textAlign:'center', marginTop:12 }}>
+              {mode === 'signin' ? "Don't have an account? " : 'Already have an account? '}
+              <button className="auth-resend" onClick={switchMode} style={{ display:'inline', padding:0 }}>
+                {mode === 'signin' ? 'Sign up' : 'Sign in'}
+              </button>
+            </p>
           </>
         )}
       </div>
@@ -149,8 +185,7 @@ function App({ onSignOut, userEmail }) {
   const cm = now.getMonth();
 
   const handleSignOut = async () => {
-    await signOut();
-    onSignOut();
+    try { await signOut(); } finally { onSignOut(); }
   };
 
   const savePlant = async (plant) => {
